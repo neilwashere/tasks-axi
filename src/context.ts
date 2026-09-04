@@ -15,12 +15,12 @@ export interface TasksContext {
   suggestionGlobals?: SuggestionGlobals;
 }
 
-export function resolveTasksContext(
-  overrides: ConfigOverrides = {},
-  suggestionGlobals?: SuggestionGlobals,
-): TasksContext {
-  const config = resolveConfig(overrides);
-
+/**
+ * Build the Store a resolved config selects. Command code calls this instead of
+ * constructing a backend directly, so a command that needs a second store (mv's
+ * destination backlog) stays as backend-agnostic as the rest of the CLI layer.
+ */
+export function createStore(config: ResolvedConfig): Store {
   if (config.backend !== "markdown") {
     throw new AxiError(
       `Unsupported backend "${config.backend}" — P1 ships the markdown backend only`,
@@ -29,10 +29,18 @@ export function resolveTasksContext(
     );
   }
 
-  const store = new MarkdownStore({
+  return new MarkdownStore({
     path: config.path,
     ...(config.archivePath ? { archivePath: config.archivePath } : {}),
   });
+}
+
+export function resolveTasksContext(
+  overrides: ConfigOverrides = {},
+  suggestionGlobals?: SuggestionGlobals,
+): TasksContext {
+  const config = resolveConfig(overrides);
+  const store = createStore(config);
   return {
     store,
     config,
