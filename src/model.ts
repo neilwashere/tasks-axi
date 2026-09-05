@@ -68,6 +68,8 @@ export interface Task {
   kind?: string;
   /** "firstmate", "no-mistakes", "hibit-monorepo" */
   repo?: string;
+  /** Stable operational home that currently owns execution of this task. */
+  owner?: string;
   /** The task body, used for full notes and truncated in list/show. */
   body?: string;
   /** Typed links: PR url, data/<id>/report.md path, or generic doc url. */
@@ -83,6 +85,8 @@ export interface Task {
   updated?: string;
   /** Maps to `(merged ...)` / `(reported ...)` / `(done ...)` on render. */
   closed?: string;
+  /** Terminal result when a retained backend distinguishes delivery from cancellation. */
+  outcome?: "delivered" | "cancelled";
   /** Versioned durable public obligation data for kind=public-followup only. */
   public_followup?: PublicFollowup;
   /** Home, harness, external-tracker id/url, and other exotica. */
@@ -96,6 +100,7 @@ export interface TaskInput {
   state?: State;
   kind?: string;
   repo?: string;
+  owner?: string;
   body?: string;
   links?: TaskLink[];
   deps?: Dep[];
@@ -119,6 +124,7 @@ export interface TaskPatch {
   addBodyLines?: string[];
   repo?: string;
   kind?: string;
+  owner?: string;
   /** Links to add (existing links are preserved). */
   addLinks?: TaskLink[];
   /** Set a structured hold, or clear it with null. */
@@ -133,6 +139,7 @@ export type TaskUpdateChange =
   | "archive"
   | "repo"
   | "kind"
+  | "owner"
   | "priority"
   | "links"
   | "hold"
@@ -162,5 +169,6 @@ export interface TaskQuery {
   state?: State;
   repo?: string;
   kind?: string;
+  owner?: string;
   limit?: number;
 }

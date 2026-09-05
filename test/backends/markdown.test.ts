@@ -1392,6 +1392,40 @@ describe("MarkdownStore", () => {
   });
 
   describe("capabilities", () => {
+    it("returns a complete structured snapshot", async () => {
+      const b = makeBacklog();
+      try {
+        const snapshot = await b.store.snapshot({ state: "queued", limit: 1 });
+        expect(snapshot.items).toHaveLength(1);
+        expect(snapshot.total).toBeGreaterThan(1);
+        expect(snapshot.complete).toBe(true);
+        expect(snapshot.source).toBe("live");
+        expect(snapshot.dependencyClosure.length).toBeGreaterThan(
+          snapshot.items.length,
+        );
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("persists first-class task ownership", async () => {
+      const b = makeBacklog();
+      try {
+        await b.store.create({
+          id: "owned-q1",
+          title: "owned work",
+          owner: "secondmate-a",
+        });
+        expect((await b.store.get("owned-q1"))?.owner).toBe("secondmate-a");
+        expect(b.read()).toContain("(owner: secondmate-a)");
+        expect((await b.store.list({ owner: "secondmate-a" })).items).toHaveLength(
+          1,
+        );
+      } finally {
+        b.cleanup();
+      }
+    });
+
     it("advertises the markdown capability set", () => {
       const b = makeBacklog();
       try {
@@ -1400,6 +1434,11 @@ describe("MarkdownStore", () => {
         expect(caps).toMatchObject({
           deps: true,
           prune: true,
+          bodyReplace: true,
+          cancellation: false,
+          hardRemove: true,
+          ownershipTransfer: false,
+          structuredSnapshot: true,
           customStates: true,
           collectionTransfer: true,
         });

@@ -9,13 +9,13 @@
 
 Task and backlog manager for agents — designed with [AXI](https://github.com/kunchenguid/axi) (Agent eXperience Interface).
 
-tasks-axi makes a tiny structured change to a human-readable backlog at near-zero output-token cost.
-It edits a hand-editable `backlog.md` in place with a byte-exact round-trip, so the markdown stays the source of truth while long task bodies never bloat a `list`.
+tasks-axi makes small structured backlog changes at near-zero output-token cost.
+Its default backend edits a hand-readable `backlog.md` in place with a byte-exact round-trip; the opt-in GitHub backend maps the same task model to Issues and one ProjectV2 board.
 It borrows the dependency-graph and ready-query model from [beads](https://github.com/gastownhall/beads), adds structured dispatch holds, and keeps the house style from its `*-axi` siblings - token-efficient TOON output, contextual next-step suggestions, idempotent mutations, and structured errors.
 
 ## Why
 
-Every backlog mutation today regenerates markdown through the model, which is expensive output tokens and risks dropped, duplicated, or reordered items.
+Hand-editing a Markdown backlog through the model is expensive in output tokens and risks dropped, duplicated, or reordered items.
 tasks-axi reduces that to the length of one short command plus a compact confirmation read back as cheap input.
 The long status line that the model used to rewrite on every status change is now a `body`.
 Note writes are inspect-then-update: read the current body with `show <id> --full`, then replace it deliberately with `update --body` or `update --body-file`.
@@ -133,6 +133,10 @@ Active holds are excluded from `ready`; a hold with `--until YYYY-MM-DD` becomes
 Use `ready --include-held` to show dispatchable ready work and a separate `held` group with the hold reason, kind, and until date.
 Use `list --state held` or `list --fields held,hold_reason,hold_kind,hold_until` when you need to scan active hold state directly.
 Pass `--json` to any mutation for a machine-readable result object (`{ "ok": true, "action": …, "task": { … } }` or operation-specific result fields) instead of TOON, so an agent can confirm a write deterministically without a follow-up read.
+`list --json`, `show --json`, and `ready --json` expose complete, untruncated backend-neutral reads; `capabilities --json` reports which optional operations the active backend supports.
+Use `--owner <home>` on `add`, `list`, `ready`, or `update` to carry and query operational ownership independently of the task's target repository.
+`owner-transfer <id> [<id>...] --from <home> --to <home>` replayably transfers a preflighted batch on backends that support ownership transfer.
+`cancel <id> --reason <text>` retains a distinct cancelled terminal outcome on backends that support cancellation; it is not an alias for destructive `rm` or delivered `done`.
 For `mv`, a single task returns `id`, while a multi-task move returns first-occurrence-ordered, deduplicated `ids`, plus `from` and `to`.
 
 Run `tasks-axi --help` for the command list, or `tasks-axi <command> --help` for per-command usage.
@@ -229,8 +233,9 @@ Single-task `mv` has the same protection; use multi-task `mv` to move its active
 
 ## Configuration
 
-Backend and path are resolved in this order: `--backend` / `--file` flags passed after the command, then `TASKS_AXI_BACKEND` / `TASKS_AXI_FILE` env, then a project `.tasks.toml`, then `~/.tasks-axi/config.toml`, then the defaults.
-Without an explicit path, tasks-axi uses `backlog.md` when present, then `data/backlog.md` when present, and otherwise targets `backlog.md` for future writes.
+The backend is resolved from `--backend`, then `TASKS_AXI_BACKEND`, then project `.tasks.toml`, then `~/.tasks-axi/config.toml`, and finally defaults to Markdown.
+Markdown's file path is resolved from `--file`, `TASKS_AXI_FILE`, project config, home config, and the conventional `backlog.md` / `data/backlog.md` locations.
+GitHub rejects `--file` and `TASKS_AXI_FILE` because a filesystem path has no remote-store meaning.
 
 ```toml
 # .tasks.toml in the project root
@@ -245,15 +250,37 @@ done_keep = 10
 `archive` is optional; when omitted, pruned tasks are appended to `done-archive.md` next to the active backlog.
 Body replacements with `--archive-body` append superseded bodies to `note-archive.md` next to the active backlog.
 
+The GitHub backend is opt-in and takes its token only from `TASKS_AXI_GITHUB_TOKEN`, `GITHUB_TOKEN`, or `GH_TOKEN`, in that order.
+Do not put credentials in `.tasks.toml`.
+
+```toml
+backend = "github"
+
+[github]
+issue_repository = "example/fleet-tasks"
+project_owner = "example"
+project_owner_type = "organization" # or "user"
+project_number = 12
+```
+
+The Project must already contain these exact default fields: `Task ID` (text), `Fleet status` (single-select), `Owning home` (text), `Task kind` (text or single-select), `Priority` (single-select), `Target repository` (text), `Wait kind` (single-select), `Wait reason` (text), `Wait until` (date), `Task links` (text), `Task dependencies` (text), and `Fleet closed` (date).
+`Fleet status` must offer `Inbox`, `Backlog`, `Ready`, `Blocked`, `Awaiting captain`, `In progress`, `Awaiting landing`, `Done`, and `Cancelled`; `Priority` must offer `P0` through `P4`.
+All field names, API endpoints, request/snapshot timeouts, and page bounds can be overridden under `[github]`; invalid or missing configuration fails before a task request.
+Task IDs are lowercase because Project text-field search is case-insensitive; every narrowed result is compared exactly client-side and duplicate exact values are conflicts.
+Issue bodies remain human-owned after creation, so generic body replacement is refused; notes use idempotently marked comments and links/dependency metadata use dedicated Project fields.
+Fleet completion closes issues only in `issue_repository`; adopted product issues remain open when their project-scoped fleet status reaches Done or Cancelled.
+GitHub does not support hard removal, pruning, collection `mv`, rendering, or public-followup obligations, and each unsupported operation refuses before mutation.
+Done retention is backend-managed and remains visible in the Project.
+
 ## Backends
 
-P1 ships the **markdown** backend only, behind a narrow `Store` interface so additional backends slot in without touching the CLI layer.
-
-| Backend                | Status  |
-| ---------------------- | ------- |
-| markdown               | shipped |
-| sqlite                 | planned |
-| github / jira / linear | planned |
+| Backend  | Status          |
+| -------- | --------------- |
+| markdown | shipped default |
+| github   | shipped opt-in  |
+| sqlite   | planned         |
+| jira     | planned         |
+| linear   | planned         |
 
 ## Development
 

@@ -27,6 +27,16 @@ export interface Capabilities {
   customStates: boolean;
   /** Does the server assign its own ids (remote trackers)? */
   serverMintsIds: boolean;
+  /** Can it replace human-authored task bodies without losing concurrent edits? */
+  bodyReplace: boolean;
+  /** Can it retain a task as explicitly cancelled without claiming delivery? */
+  cancellation: boolean;
+  /** Can it physically erase a task rather than retain a terminal record? */
+  hardRemove: boolean;
+  /** Can it change execution ownership without moving the task collection? */
+  ownershipTransfer: boolean;
+  /** Can it return a complete task set plus dependency closure? */
+  structuredSnapshot: boolean;
   /** Can it move a connected set of tasks into another collection atomically? */
   collectionTransfer: boolean;
   /** Supports the durable, receipt-gated public-followup state machine. */
@@ -42,6 +52,33 @@ export interface PruneOptions {
 export interface PruneResult {
   archived: number;
   ids: string[];
+}
+
+export interface TaskSnapshot {
+  items: Task[];
+  dependencyClosure: Task[];
+  total: number;
+  complete: boolean;
+  observedAt: string;
+  source: "live" | "cache";
+}
+
+export function snapshotTaskSet(snapshot: TaskSnapshot): Task[] {
+  const byId = new Map(
+    snapshot.dependencyClosure.map((task) => [task.id, task]),
+  );
+  for (const task of snapshot.items) byId.set(task.id, task);
+  return [...byId.values()];
+}
+
+export async function pointTaskSet(store: Store, task: Task): Promise<Task[]> {
+  const tasks = new Map([[task.id, task]]);
+  for (const dep of task.deps) {
+    if (dep.type !== "blocked-by" || tasks.has(dep.id)) continue;
+    const blocker = await store.get(dep.id);
+    if (blocker) tasks.set(blocker.id, blocker);
+  }
+  return [...tasks.values()];
 }
 
 /**
@@ -64,9 +101,11 @@ export interface Store {
   /** Apply a patch and report which fields actually changed. */
   update(id: string, patch: TaskPatch): Promise<TaskUpdateResult>;
   remove(id: string): Promise<Task>;
+  cancel?(id: string, reason: string): Promise<Task>;
 
   // query
   list(query: TaskQuery): Promise<{ items: Task[]; total: number }>;
+  snapshot(query: TaskQuery): Promise<TaskSnapshot>;
 
   // state + dependencies
   transition(id: string, to: State, opts?: TransitionOpts): Promise<Task>;
@@ -87,6 +126,11 @@ export interface Store {
    * a single-task copy-then-remove rather than risking a half-applied move.
    */
   transferMany?(ids: string[], destination: Store): Promise<Task[]>;
+  transferOwnership?(
+    ids: string[],
+    from: string,
+    to: string,
+  ): Promise<Task[]>;
 
   // maintenance (optional, capability-gated)
   prune?(options: PruneOptions): Promise<PruneResult>;

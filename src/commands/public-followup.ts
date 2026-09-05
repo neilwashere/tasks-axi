@@ -104,6 +104,27 @@ export async function publicFollowupCommand(
   context?: TasksContext,
 ): Promise<string> {
   const [command, ...args] = rawArgs;
+  const known = new Set([
+    "add",
+    "bind-work",
+    "supersede-work",
+    "work-event",
+    "list",
+    "ready",
+    "begin-delivery",
+    "record-delivery",
+    "record-error",
+    "waive",
+  ]);
+  if (command && known.has(command)) {
+    const capabilities = requireCtx(context).store.capabilities();
+    if (!capabilities.publicFollowups) {
+      throw new AxiError(
+        `The "${capabilities.backend}" backend does not support public follow-ups`,
+        "UNSUPPORTED",
+      );
+    }
+  }
   switch (command) {
     case "add":
       return publicFollowupAdd(args, context);

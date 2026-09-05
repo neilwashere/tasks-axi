@@ -10,7 +10,12 @@ import {
   takeBoolFlag,
   takeFlag,
 } from "../args.js";
-import { renderMutation, stateLabel, taskToJson } from "../confirm.js";
+import {
+  renderJson,
+  renderMutation,
+  stateLabel,
+  taskToJson,
+} from "../confirm.js";
 import { createStore, requireCtx, type TasksContext } from "../context.js";
 import {
   blockedIds,
@@ -41,7 +46,7 @@ import {
   PUBLIC_FOLLOWUP_KIND,
   clonePublicFollowup,
 } from "../public-followup.js";
-import type { Store } from "../store.js";
+import { pointTaskSet, snapshotTaskSet, type Store } from "../store.js";
 import { getSuggestions } from "../suggestions.js";
 import { renderHelp, renderOutput } from "../toon.js";
 import { renderTaskDetail, renderTaskList, showFullTextHint } from "../view.js";
@@ -99,7 +104,7 @@ Clear a structured dispatch hold (idempotent).
 flags:
   --json   print the resulting task as a JSON object`;
 
-export const READY_HELP = `usage: tasks-axi ready [--repo <name>] [--include-held]
+export const READY_HELP = `usage: tasks-axi ready [--repo <name>] [--owner <home>] [--include-held] [--json]
 List unblocked, unheld queued work dispatchable right now.
 Public-followup obligations are never dispatchable and appear only in the separate
 ready_public_followups group; use tasks-axi public-followup ready for their full payloads.
@@ -133,7 +138,7 @@ export async function startCommand(
 
   const already = current.state === "in_flight";
   const task = already ? current : await store.transition(id, "in_flight");
-  const all = (await store.list({})).items;
+  const all = await pointTaskSet(store, task);
   return renderMutation({
     json,
     confirm: already
@@ -194,7 +199,7 @@ export async function doneCommand(
       changed = result.changed.length > 0;
     }
     const pruned = await pruneDone(store, keep, noPrune);
-    const all = (await store.list({})).items;
+    const all = await pointTaskSet(store, task);
     return renderMutation({
       json,
       confirm: `done ${id} already -> ${stateLabel(task.state)}${doneExtras(pr, report)}${prunedNote(pruned)}`,
@@ -220,7 +225,7 @@ export async function doneCommand(
 
   const task = await store.transition(id, "done", opts);
   const pruned = await pruneDone(store, keep, noPrune);
-  const all = (await store.list({})).items;
+  const all = await pointTaskSet(store, task);
 
   return renderMutation({
     json,
@@ -304,7 +309,7 @@ export async function reopenCommand(
 
   const already = current.state === "queued";
   const task = already ? current : await store.transition(id, "queued");
-  const all = (await store.list({})).items;
+  const all = await pointTaskSet(store, task);
   return renderMutation({
     json,
     confirm: already
@@ -412,8 +417,8 @@ export async function blockCommand(
   const dep: Dep = { type: "blocked-by", id: by };
   const added = await store.addDep(id, dep);
 
-  const all = (await store.list({})).items;
-  const task = all.find((t) => t.id === id) ?? current;
+  const task = (await store.get(id)) ?? current;
+  const all = await pointTaskSet(store, task);
   return renderMutation({
     json,
     confirm: added
@@ -455,8 +460,8 @@ export async function unblockCommand(
   if (!current) throw notFound(id, { globals: context?.suggestionGlobals });
   const removed = await store.removeDep(id, { type: "blocked-by", id: by });
 
-  const all = (await store.list({})).items;
-  const task = all.find((t) => t.id === id) ?? current;
+  const task = (await store.get(id)) ?? current;
+  const all = await pointTaskSet(store, task);
   return renderMutation({
     json,
     confirm: removed
@@ -501,7 +506,7 @@ export async function holdCommand(
   };
   const already = sameHold(current.hold, hold);
   const task = already ? current : (await store.update(id, { hold })).task;
-  const all = (await store.list({})).items;
+  const all = await pointTaskSet(store, task);
   return renderMutation({
     json,
     confirm: already
@@ -555,7 +560,7 @@ export async function unholdCommand(
   const task = already
     ? current
     : (await store.update(id, { hold: null })).task;
-  const all = (await store.list({})).items;
+  const all = await pointTaskSet(store, task);
   return renderMutation({
     json,
     confirm: already
@@ -586,15 +591,26 @@ export async function readyCommand(
 ): Promise<string> {
   const { store } = requireCtx(context);
   const args = [...rawArgs];
+  const json = takeBoolFlag(args, "--json");
   const repo = requireNonEmptySingleLineFlagValue(
     "--repo",
     takeFlag(args, "--repo"),
   );
+  const owner = requireNonEmptySingleLineFlagValue(
+    "--owner",
+    takeFlag(args, "--owner"),
+  );
   const includeHeld = takeBoolFlag(args, "--include-held");
   requirePositionals(args, 0, 0, READY_HELP.split("\n")[0]);
 
-  const all = (await store.list({})).items;
-  let items = readyTasks(all);
+  const snapshot = await store.snapshot({
+    ...(repo ? { repo } : {}),
+    ...(owner ? { owner } : {}),
+  });
+  const all = snapshotTaskSet(snapshot);
+  let items = readyTasks(all).filter((task) =>
+    snapshot.items.some((item) => item.id === task.id),
+  );
   const blocked = blockedIds(all);
   let held = heldTasks(all).filter(
     (t) =>
@@ -606,7 +622,25 @@ export async function readyCommand(
   if (repo) items = items.filter((t) => t.repo === repo);
   if (repo) held = held.filter((t) => t.repo === repo);
   if (repo) publicFollowups = publicFollowups.filter((t) => t.repo === repo);
+  if (owner) items = items.filter((t) => t.owner === owner);
+  if (owner) held = held.filter((t) => t.owner === owner);
+  if (owner) publicFollowups = publicFollowups.filter((t) => t.owner === owner);
   const isEmpty = items.length === 0;
+
+  if (json) {
+    return renderJson({
+      ok: true,
+      action: "ready",
+      count: items.length,
+      ready: items.map((task) => taskToJson(task, all)),
+      ready_public_followups: publicFollowups.map((task) =>
+        taskToJson(task, all),
+      ),
+      ...(includeHeld
+        ? { held: held.map((task) => taskToJson(task, all)) }
+        : {}),
+    });
+  }
 
   const blocks: string[] = [formatCountLine({ count: items.length })];
   if (isEmpty) {
@@ -748,6 +782,7 @@ function taskToInput(task: Task): TaskInput {
   };
   if (task.kind) input.kind = task.kind;
   if (task.repo) input.repo = task.repo;
+  if (task.owner) input.owner = task.owner;
   if (task.body) input.body = task.body;
   if (task.hold) input.hold = { ...task.hold };
   if (task.priority !== undefined) input.priority = task.priority;
@@ -782,6 +817,19 @@ export async function mvCommand(
     ]);
   }
   const ids = [...new Set(positionals.map((p) => requireId(p, "id")))];
+  const capabilities = store.capabilities();
+  if (!capabilities.collectionTransfer && !capabilities.hardRemove) {
+    throw new AxiError(
+      `The "${capabilities.backend}" backend cannot move tasks between collections (missing capability: collectionTransfer)`,
+      "UNSUPPORTED",
+    );
+  }
+  if (config.backend !== "markdown") {
+    throw new AxiError(
+      `The "${capabilities.backend}" backend has no path-addressed collection`,
+      "UNSUPPORTED",
+    );
+  }
 
   const targetPath = resolveBacklogTarget(to);
   if (resolve(targetPath) === resolve(config.path)) {
@@ -812,7 +860,6 @@ export async function mvCommand(
     }
   }
 
-  const capabilities = store.capabilities();
   if (capabilities.collectionTransfer) {
     if (!store.transferMany) {
       throw new AxiError(

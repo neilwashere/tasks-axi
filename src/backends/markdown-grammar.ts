@@ -114,6 +114,7 @@ const TAIL_DEP = new RegExp(
   `\\s*(${DEP_MARKER}):\\s*(${ID_CHARS})(?:\\s+-\\s+((?:(?!\\s+${DEP_MARKER}:\\s).)+?))?\\s*$`,
 );
 const TAIL_REPO = /\s*\((?:[^()]*\+\s*)?repo:\s*([^)]+)\)\s*$/;
+const TAIL_OWNER = /\s*\(owner:\s*([^)]+)\)\s*$/;
 const TAIL_KIND = /\s*\(kind:\s*([^)]+)\)\s*$/;
 const TAIL_PRIORITY = /\s*\(priority:\s*([0-4])\)\s*$/;
 const TAIL_SINCE = new RegExp(`\\s*\\(since\\s+(${DATE})\\)\\s*$`);
@@ -176,6 +177,7 @@ export interface ExtractedTags {
   title: string;
   kind?: string;
   repo?: string;
+  owner?: string;
   deps: Dep[];
   created?: string;
   closed?: string;
@@ -193,6 +195,7 @@ export interface ExtractedTags {
 export function extractTags(rest: string): ExtractedTags {
   const deps: Dep[] = [];
   let repo: string | undefined;
+  let owner: string | undefined;
   let kindTag: string | undefined;
   let created: string | undefined;
   let closed: string | undefined;
@@ -218,6 +221,13 @@ export function extractTags(rest: string): ExtractedTags {
     m = title.match(TAIL_REPO);
     if (m) {
       if (repo === undefined) repo = m[1].trim();
+      title = title.slice(0, m.index);
+      stripping = true;
+      continue;
+    }
+    m = title.match(TAIL_OWNER);
+    if (m) {
+      if (owner === undefined) owner = m[1].trim();
       title = title.slice(0, m.index);
       stripping = true;
       continue;
@@ -285,7 +295,18 @@ export function extractTags(rest: string): ExtractedTags {
         }
       : undefined;
 
-  return { title, kind, repo, deps, created, closed, priority, hold, links };
+  return {
+    title,
+    kind,
+    repo,
+    owner,
+    deps,
+    created,
+    closed,
+    priority,
+    hold,
+    links,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +329,7 @@ export function buildProse(task: Task): string {
     if (!dep.reason) parts.push(`${dep.type}: ${dep.id}`);
   }
   if (task.repo) parts.push(`(repo: ${task.repo})`);
+  if (task.owner) parts.push(`(owner: ${task.owner})`);
   if (task.kind && !titleHasLeadingKind(task.title, task.kind)) {
     parts.push(`(kind: ${task.kind})`);
   }
@@ -464,6 +486,7 @@ function buildTask(
   };
   if (tags.kind) task.kind = tags.kind;
   if (tags.repo) task.repo = tags.repo;
+  if (tags.owner) task.owner = tags.owner;
   if (metadata.publicFollowup) {
     if (tags.hold) {
       throw new AxiError(

@@ -11,7 +11,12 @@ import {
 import { takeBody } from "../body.js";
 import { deriveLinks, extractTags } from "../backends/markdown-grammar.js";
 import { PR_URL_EXPECTED } from "../pr-url.js";
-import { renderMutation, stateLabel, taskToJson } from "../confirm.js";
+import {
+  renderJson,
+  renderMutation,
+  stateLabel,
+  taskToJson,
+} from "../confirm.js";
 import { requireCtx, type TasksContext } from "../context.js";
 import { blockedIds, heldTasks } from "../derive.js";
 import { AxiError, notFound } from "../errors.js";
@@ -33,7 +38,7 @@ import {
   type TaskPatch,
   type TaskUpdateChange,
 } from "../model.js";
-import type { Store } from "../store.js";
+import { pointTaskSet, snapshotTaskSet, type Store } from "../store.js";
 import { getSuggestions } from "../suggestions.js";
 import { renderHelp, renderOutput, renderScalar } from "../toon.js";
 import {
@@ -46,7 +51,7 @@ import {
 export const ADD_HELP = `usage: tasks-axi add <id> "<title>" [flags]
 aliases: create
 flags:
-  --kind <ship|scout|docs|...>, --repo <name>, --body <text> or --body-file <path>
+  --kind <ship|scout|docs|...>, --repo <name>, --owner <home>, --body <text> or --body-file <path>
   --start (place in In flight) | --queue (place in Queued, default)
   --blocked-by <id> (repeatable, must exist), --pr <url>, --report <path>, --priority <0-4>
   --mint [--prefix <p>]   mint a slug-xx id from the title instead of passing one
@@ -58,8 +63,10 @@ examples:
 
 export const LIST_HELP = `usage: tasks-axi list [flags]
 flags:
-  --state <queued|in_flight|done|held>, --repo <name>, --kind <name>, --blocked
-  --limit <n>, --fields <a,b,c>  (extra: ${Object.keys(LIST_EXTRA_FIELDS)
+  --state <queued|in_flight|done|held>, --repo <name>, --kind <name>, --owner <home>, --blocked
+  --limit <n>, --json, --fields <a,b,c>  (extra: ${Object.keys(
+    LIST_EXTRA_FIELDS,
+  )
     .sort()
     .join(", ")})
 examples:
@@ -67,7 +74,7 @@ examples:
   tasks-axi list --repo no-mistakes --fields blocked_by,created
   tasks-axi list --blocked`;
 
-export const SHOW_HELP = `usage: tasks-axi show <id> [--full]
+export const SHOW_HELP = `usage: tasks-axi show <id> [--full] [--json]
 aliases: view
 examples:
   tasks-axi show homemux-h7
@@ -78,7 +85,7 @@ aliases: edit
 flags:
   --title <text>, --body <text> or --body-file <path>
   --archive-body   with --body/--body-file, archive the previous body
-  --repo <name>, --kind <name>, --priority <0-4>, --pr <url>, --report <path>
+  --repo <name>, --kind <name>, --owner <home>, --priority <0-4>, --pr <url>, --report <path>
   --json   print the resulting task as a JSON object
 examples:
   tasks-axi show nm-release-validation --full
@@ -233,6 +240,7 @@ export async function addCommand(
 
   const kind = requireSafeTagFlagValue("--kind", takeFlag(args, "--kind"));
   const repo = requireSafeTagFlagValue("--repo", takeFlag(args, "--repo"));
+  const owner = requireSafeTagFlagValue("--owner", takeFlag(args, "--owner"));
   const body = requireNonEmptyFlagValue("--body", takeBody(args));
   const pr = takeFlag(args, "--pr");
   const report = takeFlag(args, "--report");
@@ -293,7 +301,7 @@ export async function addCommand(
   if (!mint) {
     const existing = await store.get(id);
     if (existing) {
-      const all = (await store.list({})).items;
+      const all = await pointTaskSet(store, existing);
       return renderMutation({
         json,
         confirm: `add ${id} already exists -> ${stateLabel(existing.state)}`,
@@ -333,11 +341,12 @@ export async function addCommand(
   };
   if (kind) input.kind = kind;
   if (repo) input.repo = repo;
+  if (owner) input.owner = owner;
   if (body !== undefined) input.body = body;
   if (priority !== undefined) input.priority = priority;
 
   const task = await store.create(input);
-  const all = (await store.list({})).items;
+  const all = await pointTaskSet(store, task);
   return renderMutation({
     json,
     confirm: `added ${id}${addAttrs(task)} -> ${stateLabel(task.state)}`,
@@ -367,6 +376,7 @@ export async function listCommand(
   const { store } = requireCtx(context);
   const args = [...rawArgs];
 
+  const json = takeBoolFlag(args, "--json");
   const { extraDefs } = parseFields(
     takeFlag(args, "--fields"),
     LIST_EXTRA_FIELDS,
@@ -380,6 +390,10 @@ export async function listCommand(
     "--kind",
     takeFlag(args, "--kind"),
   );
+  const owner = requireNonEmptySingleLineFlagValue(
+    "--owner",
+    takeFlag(args, "--owner"),
+  );
   const onlyBlocked = takeBoolFlag(args, "--blocked");
   const limit = parseOptionalNonNegativeIntegerFlag(
     "--limit",
@@ -387,14 +401,19 @@ export async function listCommand(
   );
   requirePositionals(args, 0, 0, LIST_HELP.split("\n")[0]);
 
-  // The full set is needed to derive `blocked` (a dep-graph projection), so the
-  // list command filters in the CLI rather than pushing every filter to the
-  // store. The store's own filtering is exercised by `home` and `ready`.
-  const all = (await store.list({})).items;
+  // The dependency closure supplied by snapshot keeps blocked derivation
+  // correct while remote backends narrow the primary item scan server-side.
+  const snapshot = await store.snapshot({
+    ...(repo ? { repo } : {}),
+    ...(kind ? { kind } : {}),
+    ...(owner ? { owner } : {}),
+  });
+  const itemsInCollection = snapshot.items;
+  const all = snapshotTaskSet(snapshot);
   const blocked = blockedIds(all);
   const held = new Set(heldTasks(all).map((t) => t.id));
 
-  let matched = all;
+  let matched = itemsInCollection;
   if (state === "held") {
     matched = matched.filter((t) => held.has(t.id));
   } else if (state) {
@@ -402,12 +421,23 @@ export async function listCommand(
   }
   if (repo) matched = matched.filter((t) => t.repo === repo);
   if (kind) matched = matched.filter((t) => (t.kind ?? "task") === kind);
+  if (owner) matched = matched.filter((t) => t.owner === owner);
   if (onlyBlocked) matched = matched.filter((t) => blocked.has(t.id));
 
   const total = matched.length;
   const items =
     limit !== undefined && limit >= 0 ? matched.slice(0, limit) : matched;
   const isEmpty = total === 0;
+
+  if (json) {
+    return renderJson({
+      ok: true,
+      action: "list",
+      count: items.length,
+      total,
+      tasks: items.map((task) => taskToJson(task, all)),
+    });
+  }
 
   const countLine = formatCountLine({
     count: items.length,
@@ -463,14 +493,23 @@ export async function showCommand(
   const { store } = requireCtx(context);
   const args = [...rawArgs];
   const full = takeBoolFlag(args, "--full");
+  const json = takeBoolFlag(args, "--json");
   const positionals = requirePositionals(args, 1, 1, SHOW_HELP.split("\n")[0]);
   const id = requireId(positionals[0], "id");
 
   const task = await store.get(id);
   if (!task) throw notFound(id, { globals: context?.suggestionGlobals });
 
-  const all = (await store.list({})).items;
+  const all = await pointTaskSet(store, task);
   const isBlocked = blockedIds(all).has(id);
+
+  if (json) {
+    return renderJson({
+      ok: true,
+      action: "show",
+      task: taskToJson(task, all),
+    });
+  }
 
   const blocks = [renderTaskDetail(task, all, full)];
   const help =
@@ -504,6 +543,10 @@ export async function updateCommand(
   const kind = requireNonEmptySingleLineFlagValue(
     "--kind",
     takeFlag(args, "--kind"),
+  );
+  const owner = requireNonEmptySingleLineFlagValue(
+    "--owner",
+    takeFlag(args, "--owner"),
   );
   const priority = parsePriority(takeFlag(args, "--priority"));
   const pr = takeFlag(args, "--pr");
@@ -543,6 +586,9 @@ export async function updateCommand(
   if (kind !== undefined) {
     patch.kind = kind;
   }
+  if (owner !== undefined) {
+    patch.owner = owner;
+  }
   if (priority !== undefined) patch.priority = priority;
   const addLinks = parseLinks(pr, report);
   if (addLinks.length > 0) patch.addLinks = addLinks;
@@ -560,7 +606,7 @@ export async function updateCommand(
   const task = result.task;
   const changed = orderUpdateChanges(result.changed);
   const already = changed.length === 0;
-  const all = (await store.list({})).items;
+  const all = await pointTaskSet(store, task);
   return renderMutation({
     json,
     confirm: already
@@ -590,6 +636,7 @@ function orderUpdateChanges(changed: TaskUpdateChange[]): TaskUpdateChange[] {
     "archive",
     "repo",
     "kind",
+    "owner",
     "priority",
     "links",
     "hold",

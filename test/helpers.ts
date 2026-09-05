@@ -101,6 +101,7 @@ export function withoutCollectionTransfer(ctx: TasksContext): TasksContext {
     update: (id, patch) => ctx.store.update(id, patch),
     remove: (id) => ctx.store.remove(id),
     list: (query) => ctx.store.list(query),
+    snapshot: (query) => ctx.store.snapshot(query),
     transition: (id, to, opts) => ctx.store.transition(id, to, opts),
     addDep: (id, dep) => ctx.store.addDep(id, dep),
     removeDep: (id, dep) => ctx.store.removeDep(id, dep),

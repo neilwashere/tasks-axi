@@ -1,7 +1,7 @@
 # tasks-axi — agent notes
 
 Agent-ergonomic task/backlog CLI in the `*-axi` family, built on `axi-sdk-js` and mirroring `gh-axi`.
-P1 ships only the markdown backend behind a `Store` seam; sqlite (P2) and remote trackers (P3) are deferred.
+Markdown is the default backend behind a `Store` seam; this fork also ships an opt-in GitHub Issues + ProjectV2 backend, while sqlite and other remote trackers remain deferred.
 
 ## Architecture
 
@@ -9,11 +9,12 @@ The CLI layer never knows which backend is active — it only talks to the `Stor
 
 - `src/cli.ts` — `runAxiCli` wiring: `DESCRIPTION`, `TOP_HELP`, the verb→handler map (with aliases create/view/edit/delete/close), the optional `task` noun prefix, and the global `--backend` / `--file` flags (stripped before handlers, parsed for `resolveContext`).
 - `src/context.ts` — `resolveTasksContext` builds the backend `Store` + `ResolvedConfig`; every command receives this `TasksContext`.
-- `src/store.ts` - the `Store` interface and `Capabilities`. Core contract: `create/get/update/remove/list/transition/addDep/removeDep/updatePublicFollowup`. `transferMany` (gated on the `collectionTransfer` capability), `prune`, and `render` are optional and capability-gated.
+- `src/store.ts` - the `Store` interface and `Capabilities`. Core contract: `create/get/update/remove/list/transition/addDep/removeDep/updatePublicFollowup`. Complete `snapshot` reads and optional `cancel`, `transferMany`, `transferOwnership`, `prune`, and `render` are capability-gated.
 - `src/model.ts` — the `Task` data model (report §5).
 - `src/pr-url.ts` — `isPrUrl`, the one canonical PR-URL seam (GitHub `/pull/<n>` on github.com, Forgejo `/pulls/<n>` on any lowercase DNS host) shared by prose link derivation, `--pr` validation, and public-followup `pr_url`; near-misses derive as `doc` links, never `pr`.
 - `src/derive.ts` - worker `blocked` / `ready` / active `held` and public delivery readiness are derived in the CLI from `list` + the dep graph + hold date gates, never Store methods, so every backend gets them for free.
-- `src/backends/markdown*.ts` — the only P1 backend.
+- `src/backends/markdown*.ts` — the local, hand-editable default backend.
+- `src/backends/github.ts` — backend-neutral GitHub task semantics over an injected gateway; `github-api.ts` owns bounded native-fetch REST/GraphQL transport and Project schema validation.
 - `src/public-followup.ts` - authoritative versioned schema, strict privacy-safe validation, canonical encoding, immutable-field checks, relation/event readiness, and terminal-state invariants for `kind=public-followup`; `src/commands/public-followup.ts` owns its dedicated CLI state machine.
 - `src/commands/*` — one file per verb group; `src/view.ts` owns the read-side TOON projection; `src/confirm.ts` owns the write-side output (the `ok:` confirmation line, the `--json` payload, and `renderMutation`, which assembles both).
 - Shared helpers copied from the family: `args.ts`, `body.ts`, `format.ts`, `fields.ts`, `toon.ts`, `suggestions.ts`, `skill.ts` (minimal CLI-deferring stub generator).
@@ -48,7 +49,12 @@ The CLI layer never knows which backend is active — it only talks to the `Stor
 - **`done` on an already-Done task** stays idempotent but backfills supplied `--pr`, `--report`, and non-duplicate `--note` metadata without replacing the original closed date.
 - **Dependency mutations validate targets.** `add --blocked-by` and `block --by` reject missing blockers and self-blocks. Parsed dangling blockers are still treated as resolved for legacy hand-edited files.
 - **Blocking tasks are protected.** `rm` and single-id `mv` reject a task that still blocks active dependents; unblock or complete the dependents first.
-- **`mv` is a multi-id atomic cross-file move.** `mv <id> [<id>...] --to <path>` moves a whole connected set in one transaction: all land or none do, no intermediate on-disk state that loses a link. `mvCommand` builds the destination through `createStore` and dispatches on the `collectionTransfer` capability to the optional `Store.transferMany`, never on a concrete backend class; markdown implements it via `moveManyTo` under a two-file `withLocks`. Declaring the capability without implementing `transferMany` is a Store-contract violation and is named as one rather than silently downgraded. A backend without `collectionTransfer` refuses a multi-id move (naming the capability) and takes a single-id copy-then-remove fallback that first re-checks the same split-dependency invariant and declines any task carrying `public_followup` data at all — a durable obligation is only safe to relocate atomically; a rollback of the staged copy is the backstop for backend preconditions the command layer cannot see, and both it and the backend path raise the shared `partialMoveError` when even that fails. Intra-set `blocked-by` edges (reason strings included) survive because both endpoints travel together; `requireNoSplitDeps` refuses and names any edge whose blocker/dependent would be stranded across the two files. Single-id `mv` is just N=1 (`moveTo` delegates to `moveManyTo`), so its byte output is unchanged. Moved items are re-rendered canonically, so trailing blank separators before the next item/section are dropped (a move-then-move-back is byte-exact only when the source had no such trailing blank).
+- **`mv` is a multi-id atomic cross-file move.** `mv <id> [<id>...] --to <path>` moves a whole connected set in one transaction: all land or none do, no intermediate on-disk state that loses a link. `mvCommand` builds the destination through `createStore` and dispatches on the `collectionTransfer` capability to the optional `Store.transferMany`, never on a concrete backend class; markdown implements it via `moveManyTo` under a two-file `withLocks`. Declaring the capability without implementing `transferMany` is a Store-contract violation and is named as one rather than silently downgraded. A backend without `collectionTransfer` refuses a multi-id move (naming the capability) and takes a single-id copy-then-remove fallback only when it also supports hard removal; it first re-checks split dependencies and declines any task carrying `public_followup` data. Intra-set `blocked-by` edges and reasons survive because both endpoints travel together.
+- **GitHub project status is fleet-local.** Done and Cancelled close only issues in the configured fleet issue repository; adopted product issues remain globally open.
+- **GitHub issue bodies are human-owned.** Creation adds one recovery marker, generic replacement is refused, notes are idempotently marked comments, and task links/dependencies live in dedicated Project text fields.
+- **GitHub writes converge through held node ids.** Search is discovery-only and case-insensitive, exact Task ID comparison is client-side, every field write is verified by direct Project item read, and duplicate exact ids are hard conflicts.
+- **GitHub snapshots exhaust or fail.** Every Project, relation, schema, issue-recovery, and comment connection is bounded; truncation and timeout are errors, never partial success.
+- **Ownership transfer is replayable.** A batch preflight accepts only source or destination ownership, then writes source-owned items and verifies the whole batch at the destination before success.
 - **Structured holds gate readiness.** `hold <id> --reason "<text>" [--until YYYY-MM-DD] [--kind captain|external|load|parked|future]` writes canonical hold tags; `unhold <id>` clears them.
   Hold reasons are single-line tag values without parentheses because parentheses delimit managed tags.
   Active holds keep queued tasks out of `ready`, while `ready --include-held` emits a separate `held` group.
@@ -56,14 +62,14 @@ The CLI layer never knows which backend is active — it only talks to the `Stor
   `list --state held` filters to active held tasks, and hold columns are available via `--fields held,hold_reason,hold_kind,hold_until`.
 - **Hold migration mapping.** Future migration code should map prose markers to structured holds without bulk-rewriting by hand: `HELD` / `do not dispatch` / `CAPTAIN-DECISION` -> `kind: captain` unless the text points elsewhere; `PARKED` -> `kind: parked`; `DEFERRED` -> `kind: future`; load-clearing language such as `hold until <load clears>` -> `kind: load`; external dependency wording -> `kind: external`. Preserve the original prose as the hold reason unless a safer human-readable reason is explicitly supplied.
 - Idempotent mutations exit 0 with `already: true`; errors are `AxiError` with SDK exit codes (VALIDATION_ERROR→2, else 1).
-- **Write ops are confirmation-forward.** Every mutation (`add`/`start`/`done`/`reopen`/`update`/`rm`/`block`/`unblock`/`hold`/`unhold`/`public-followup`/`mv`/`prune`/`render`) leads with a terse `ok:` line (built in `confirm.ts`) confirming the write result.
+- **Write ops are confirmation-forward.** Every mutation (`add`/`start`/`done`/`cancel`/`reopen`/`update`/`rm`/`block`/`unblock`/`hold`/`unhold`/`owner-transfer`/`public-followup`/`mv`/`prune`/`render`) leads with a terse `ok:` line (built in `confirm.ts`) confirming the write result.
   Task-state mutations include the resulting state (e.g. `ok: start <id> -> In flight`), while maintenance/removal commands confirm their own result shape (e.g. `ok: render -> normalized <n>`, `ok: removed <id>`).
   Optional structured detail follows (`add`/`update` keep the full `task:` record), then state-aware hints.
   The `ok:` line is a plain top-level TOON scalar (no `encode()` quoting) - confirmation messages are built from bounded values (ids, names, validated urls/paths, counts) so the combined output still decodes as TOON.
 - **Hints are state-aware, never contradictory.** A command must not suggest an action it just performed.
   `add` branches its suggestion on the resulting state (`getSuggestions({action:"add", state})`): `--start`/in-flight → suggest `done`, queued → suggest `start`, done → suggest `reopen`.
   Idempotent paths emit the same state-aware hint as the fresh path.
-- **`--json` is the machine-readable success signal.** Every mutation accepts `--json`, which replaces the TOON output with a single pretty-printed object `{ ok: true, action, [already], task|id|operation fields... }` (see `renderMutation` / `taskToJson`).
+- **`--json` is the machine-readable success signal.** Every mutation accepts `--json`, which replaces TOON with one result object; `list`, `show`, and `ready` also expose complete JSON reads, and `capabilities --json` exposes the active backend contract.
   This lets an agent confirm a write deterministically without a follow-up read.
   Errors still use structured-error output + non-zero exit (not JSON), so `exit 0` + `ok:true` = success.
 
@@ -95,7 +101,7 @@ Any argv shape other than exactly one version flag falls through to `runAxiCli`,
 ## Follow-ups (out of P1 scope)
 
 - Migrate firstmate's own `backlog.md` onto tasks-axi (a separate firstmate-repo change).
-- sqlite backend (P2); github/jira/linear backends (P3) — slot in behind the existing `Store` seam.
+- sqlite, Jira, and Linear backends — slot in behind the existing `Store` seam.
 - Optional: count free-form Done lines toward the prune keep, or recognize compound ids (`a / b`).
 
 ## Maintaining this file

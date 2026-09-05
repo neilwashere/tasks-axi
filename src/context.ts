@@ -1,3 +1,5 @@
+import { GithubApiGateway } from "./backends/github-api.js";
+import { GithubStore } from "./backends/github.js";
 import { MarkdownStore } from "./backends/markdown.js";
 import {
   type ConfigOverrides,
@@ -25,18 +27,17 @@ export interface TasksContext {
  * destination backlog) stays as backend-agnostic as the rest of the CLI layer.
  */
 export function createStore(config: ResolvedConfig): Store {
-  if (config.backend !== "markdown") {
-    throw new AxiError(
-      `Unsupported backend "${config.backend}" — P1 ships the markdown backend only`,
-      "UNSUPPORTED",
-      ['Set `backend = "markdown"` in .tasks.toml, or omit --backend'],
-    );
+  if (config.backend === "markdown") {
+    return new MarkdownStore({
+      path: config.path,
+      ...(config.archivePath ? { archivePath: config.archivePath } : {}),
+    });
   }
-
-  return new MarkdownStore({
-    path: config.path,
-    ...(config.archivePath ? { archivePath: config.archivePath } : {}),
-  });
+  if (config.backend === "github") {
+    const gateway = new GithubApiGateway({ config: config.github });
+    return new GithubStore({ config: config.github, gateway });
+  }
+  throw new AxiError("Unsupported backend configuration", "UNSUPPORTED");
 }
 
 export function resolveTasksContext(

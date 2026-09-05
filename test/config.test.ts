@@ -36,6 +36,29 @@ describe("parseConfigToml", () => {
     });
   });
 
+  it("reads the [github] table", () => {
+    const cfg = parseConfigToml(
+      [
+        'backend = "github"',
+        "[github]",
+        'issue_repository = "example/fleet"',
+        'project_owner = "example"',
+        'project_owner_type = "organization"',
+        "project_number = 12",
+        'task_id_field = "Task ID"',
+        "max_pages = 25",
+      ].join("\n"),
+    );
+    expect(cfg.github).toMatchObject({
+      issue_repository: "example/fleet",
+      project_owner: "example",
+      project_owner_type: "organization",
+      project_number: 12,
+      task_id_field: "Task ID",
+      max_pages: 25,
+    });
+  });
+
   it("ignores unknown keys and tables", () => {
     const cfg = parseConfigToml('[sqlite]\npath = ".tasks.db"\npath: broken\n');
     expect(cfg.markdown).toBeUndefined();
@@ -90,6 +113,17 @@ describe("resolveConfig", () => {
     expect(cfg.doneKeep).toBe(10);
   });
 
+  it("rejects unknown backends during configuration resolution", () => {
+    expect(() =>
+      resolveConfig({
+        backend: "linear",
+        cwd: dir,
+        home,
+        env: {},
+      }),
+    ).toThrow('Unsupported backend "linear"');
+  });
+
   it("prefers data/backlog.md when it exists and backlog.md does not", () => {
     const data = join(dir, "data");
     mkdirSync(data, { recursive: true });
@@ -139,6 +173,68 @@ describe("resolveConfig", () => {
       file: "/abs/from-flag.md",
     });
     expect(fromFlag.path).toBe("/abs/from-flag.md");
+  });
+
+  it("resolves complete GitHub settings and keeps tokens environment-only", () => {
+    writeFileSync(
+      join(dir, ".tasks.toml"),
+      [
+        'backend = "github"',
+        "[github]",
+        'issue_repository = "example/fleet"',
+        'project_owner = "example"',
+        'project_owner_type = "organization"',
+        "project_number = 12",
+      ].join("\n"),
+    );
+    const cfg = resolveConfig({
+      cwd: dir,
+      home,
+      env: { TASKS_AXI_GITHUB_TOKEN: "secret-for-test" },
+    });
+    expect(cfg.github).toMatchObject({
+      issueRepository: "example/fleet",
+      projectOwner: "example",
+      projectOwnerType: "organization",
+      projectNumber: 12,
+      token: "secret-for-test",
+      taskIdField: "Task ID",
+      statusField: "Fleet status",
+      maxPages: 100,
+    });
+  });
+
+  it("rejects incomplete GitHub settings and GitHub --file before network", () => {
+    writeFileSync(
+      join(dir, ".tasks.toml"),
+      'backend = "github"\n[github]\nproject_owner = "example"\n',
+    );
+    expect(() =>
+      resolveConfig({
+        cwd: dir,
+        home,
+        env: { TASKS_AXI_GITHUB_TOKEN: "secret-for-test" },
+      }),
+    ).toThrow(/github\.issue_repository/);
+
+    writeFileSync(
+      join(dir, ".tasks.toml"),
+      [
+        'backend = "github"',
+        "[github]",
+        'issue_repository = "example/fleet"',
+        'project_owner = "example"',
+        "project_number = 12",
+      ].join("\n"),
+    );
+    expect(() =>
+      resolveConfig({
+        cwd: dir,
+        home,
+        file: "backlog.md",
+        env: { TASKS_AXI_GITHUB_TOKEN: "secret-for-test" },
+      }),
+    ).toThrow(/--file.*markdown/);
   });
 
   it("reads done_keep from the project toml", () => {

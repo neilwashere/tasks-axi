@@ -44,6 +44,7 @@ import type {
   PruneOptions,
   PruneResult,
   Store,
+  TaskSnapshot,
 } from "../store.js";
 import { atomicWrite, readFileSafe, withLock, withLocks } from "./lock.js";
 import {
@@ -121,7 +122,7 @@ function normalizeTitle(title: string): string {
 
 function normalizeTagValue(
   value: string | undefined,
-  field: "kind" | "repo",
+  field: "kind" | "repo" | "owner",
 ): string | undefined {
   if (value === undefined) return undefined;
   if (/[()\r\n]/.test(value)) {
@@ -343,6 +344,11 @@ export class MarkdownStore implements Store {
       realtimeSync: false,
       customStates: true,
       serverMintsIds: false,
+      bodyReplace: true,
+      cancellation: false,
+      hardRemove: true,
+      ownershipTransfer: false,
+      structuredSnapshot: true,
       collectionTransfer: true,
       publicFollowups: true,
     };
@@ -432,11 +438,23 @@ export class MarkdownStore implements Store {
     if (query.state) items = items.filter((t) => t.state === query.state);
     if (query.repo) items = items.filter((t) => t.repo === query.repo);
     if (query.kind) items = items.filter((t) => t.kind === query.kind);
+    if (query.owner) items = items.filter((t) => t.owner === query.owner);
     const total = items.length;
     if (query.limit !== undefined && query.limit >= 0) {
       items = items.slice(0, query.limit);
     }
     return { items, total };
+  }
+
+  async snapshot(query: TaskQuery): Promise<TaskSnapshot> {
+    const result = await this.list(query);
+    return {
+      ...result,
+      dependencyClosure: (await this.list({})).items,
+      complete: true,
+      observedAt: this.now(),
+      source: "live",
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -512,6 +530,7 @@ export class MarkdownStore implements Store {
     let title = normalizeTitle(input.title);
     const kind = normalizeTagValue(input.kind, "kind");
     const repo = normalizeTagValue(input.repo, "repo");
+    const owner = normalizeTagValue(input.owner, "owner");
     // Links live in the prose; fold any provided links into the title text.
     for (const link of input.links ?? []) {
       title = appendTitleLink(title, link);
@@ -525,6 +544,7 @@ export class MarkdownStore implements Store {
     };
     if (kind) task.kind = kind;
     if (repo) task.repo = repo;
+    if (owner) task.owner = owner;
     if (input.body) task.body = input.body;
     const hold = normalizeHold(input.hold);
     if (hold) task.hold = hold;
@@ -682,6 +702,17 @@ export class MarkdownStore implements Store {
             task.repo = repo;
           }
           markChanged("repo");
+        }
+      }
+      if (patch.owner !== undefined) {
+        const owner = normalizeTagValue(patch.owner, "owner");
+        if (task.owner !== owner) {
+          if (owner === undefined) {
+            delete task.owner;
+          } else {
+            task.owner = owner;
+          }
+          markChanged("owner");
         }
       }
       if (patch.kind !== undefined) {

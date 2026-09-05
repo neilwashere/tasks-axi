@@ -101,6 +101,20 @@ describe("CLI entrypoint", () => {
     );
   });
 
+  it("reports active backend capabilities as JSON", async () => {
+    const c = capture();
+    await main({ argv: ["capabilities", "--json"], stdout: c.stdout });
+    expect(JSON.parse(c.read())).toMatchObject({
+      ok: true,
+      action: "capabilities",
+      capabilities: {
+        backend: "markdown",
+        structuredSnapshot: true,
+        collectionTransfer: true,
+      },
+    });
+  });
+
   it("emits machine-readable JSON for a mutation with --json", async () => {
     const c = capture();
     await main({ argv: ["start", "cert-cleanup", "--json"], stdout: c.stdout });

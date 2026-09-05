@@ -16,6 +16,11 @@ import {
   showCommand,
   updateCommand,
 } from "./commands/crud.js";
+import { CANCEL_HELP, cancelCommand } from "./commands/cancel.js";
+import {
+  CAPABILITIES_HELP,
+  capabilitiesCommand,
+} from "./commands/capabilities.js";
 import {
   BLOCK_HELP,
   DONE_HELP,
@@ -44,6 +49,10 @@ import {
 } from "./commands/maintain.js";
 import { homeCommand } from "./commands/home.js";
 import {
+  OWNER_TRANSFER_HELP,
+  ownerTransferCommand,
+} from "./commands/ownership.js";
+import {
   PUBLIC_FOLLOWUP_HELP,
   publicFollowupCommand,
   publicFollowupSubcommandHelp,
@@ -63,10 +72,10 @@ type MainOptions = {
 };
 
 export const TOP_HELP = `usage: tasks-axi [command] [args] [flags]
-commands[19]:
-  (none)=dashboard, add, list, show, start, done, reopen, update, rm, block, unblock, hold, unhold, ready, public-followup, mv, prune, render, setup
+commands[22]:
+  (none)=dashboard, add, list, show, start, done, cancel, reopen, update, rm, block, unblock, hold, unhold, ready, owner-transfer, capabilities, public-followup, mv, prune, render, setup
 flags[4]:
-  --backend <name> (after command), --file <path> (after command), --json (mutations: machine-readable result), --help, -v/-V/--version
+  --backend <name> (after command), --file <path> (after command), --json (machine-readable result), --help, -v/-V/--version
 examples:
   tasks-axi
   tasks-axi add homemux-h7 "owns HomeMux end to end" --kind secondmate --start
@@ -92,6 +101,7 @@ const COMMANDS: Record<string, CommandFn> = {
   start: withContext(startCommand),
   done: withContext(doneCommand),
   close: withContext(doneCommand),
+  cancel: withContext(cancelCommand),
   reopen: withContext(reopenCommand),
   update: withContext(updateCommand),
   edit: withContext(updateCommand),
@@ -102,6 +112,8 @@ const COMMANDS: Record<string, CommandFn> = {
   hold: withContext(holdCommand),
   unhold: withContext(unholdCommand),
   ready: withContext(readyCommand),
+  "owner-transfer": withContext(ownerTransferCommand),
+  capabilities: withContext(capabilitiesCommand),
   "public-followup": withContext(publicFollowupCommand),
   mv: withContext(mvCommand),
   prune: withContext(pruneCommand),
@@ -118,6 +130,7 @@ const COMMAND_HELP: Record<string, string> = {
   start: START_HELP,
   done: DONE_HELP,
   close: DONE_HELP,
+  cancel: CANCEL_HELP,
   reopen: REOPEN_HELP,
   update: UPDATE_HELP,
   edit: UPDATE_HELP,
@@ -128,6 +141,8 @@ const COMMAND_HELP: Record<string, string> = {
   hold: HOLD_HELP,
   unhold: UNHOLD_HELP,
   ready: READY_HELP,
+  "owner-transfer": OWNER_TRANSFER_HELP,
+  capabilities: CAPABILITIES_HELP,
   "public-followup": PUBLIC_FOLLOWUP_HELP,
   mv: MV_HELP,
   prune: PRUNE_HELP,

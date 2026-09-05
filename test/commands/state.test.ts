@@ -609,6 +609,30 @@ describe("state commands", () => {
       }
     });
 
+    it("emits structured ready groups with worker-ready count semantics", async () => {
+      const b = makeBacklog();
+      try {
+        await holdCommand(["cert-cleanup", "--reason", "park it"], b.ctx);
+        const parsed = JSON.parse(
+          await readyCommand(["--include-held", "--json"], b.ctx),
+        ) as {
+          ok: boolean;
+          action: string;
+          count: number;
+          ready: Array<{ id: string }>;
+          ready_public_followups: Array<{ id: string }>;
+          held: Array<{ id: string }>;
+        };
+        expect(parsed.ok).toBe(true);
+        expect(parsed.action).toBe("ready");
+        expect(parsed.count).toBe(parsed.ready.length);
+        expect(parsed.ready_public_followups).toEqual([]);
+        expect(parsed.held.map((task) => task.id)).toContain("cert-cleanup");
+      } finally {
+        b.cleanup();
+      }
+    });
+
     it("excludes held tasks by default", async () => {
       const b = makeBacklog();
       try {

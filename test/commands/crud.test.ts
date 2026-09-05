@@ -412,6 +412,32 @@ describe("crud commands", () => {
       }
     });
 
+    it("emits complete structured tasks with count and pre-limit total", async () => {
+      const b = makeBacklog();
+      try {
+        const parsed = JSON.parse(
+          await listCommand(
+            ["--state", "queued", "--limit", "2", "--json"],
+            b.ctx,
+          ),
+        ) as {
+          ok: boolean;
+          action: string;
+          count: number;
+          total: number;
+          tasks: Array<{ id: string; body: string | null; blocked: boolean }>;
+        };
+        expect(parsed.ok).toBe(true);
+        expect(parsed.action).toBe("list");
+        expect(parsed.count).toBe(2);
+        expect(parsed.total).toBeGreaterThan(parsed.count);
+        expect(parsed.tasks).toHaveLength(2);
+        expect(parsed.tasks[0]).toHaveProperty("blocked");
+      } finally {
+        b.cleanup();
+      }
+    });
+
     it("filters by state and reports a true total when limited", async () => {
       const b = makeBacklog();
       try {
@@ -590,6 +616,28 @@ describe("crud commands", () => {
         expect(out).toContain("use --full");
         const full = await showCommand(["owns-widget-h7", "--full"], b.ctx);
         expect(full).not.toContain("use --full");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("emits an untruncated structured task", async () => {
+      const b = makeBacklog();
+      try {
+        const parsed = JSON.parse(
+          await showCommand(["multi-line-w8", "--json"], b.ctx),
+        ) as {
+          ok: boolean;
+          action: string;
+          task: { id: string; body: string | null; blocked: boolean };
+        };
+        expect(parsed).toMatchObject({
+          ok: true,
+          action: "show",
+          task: { id: "multi-line-w8" },
+        });
+        expect(parsed.task.body).toContain("Follow-up note added later");
+        expect(parsed.task).toHaveProperty("blocked");
       } finally {
         b.cleanup();
       }

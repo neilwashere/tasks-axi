@@ -2,6 +2,7 @@ import { encode } from "@toon-format/toon";
 import { requireCtx, type TasksContext } from "../context.js";
 import { blockedIds, readyTasks } from "../derive.js";
 import type { Task } from "../model.js";
+import { snapshotTaskSet } from "../store.js";
 import { DELIVERY_STATES, PUBLIC_FOLLOWUP_KIND } from "../public-followup.js";
 import { getSuggestions, withSuggestionGlobals } from "../suggestions.js";
 import { field, renderHelp, renderList, renderOutput } from "../toon.js";
@@ -29,16 +30,18 @@ export async function homeCommand(
   context?: TasksContext,
 ): Promise<string> {
   const { store } = requireCtx(context);
-  const all = (await store.list({})).items;
+  const snapshot = await store.snapshot({});
+  const items = snapshot.items;
+  const all = snapshotTaskSet(snapshot);
 
-  const inFlight = all.filter((t) => t.state === "in_flight");
-  const queued = all.filter(
+  const inFlight = items.filter((t) => t.state === "in_flight");
+  const queued = items.filter(
     (t) => t.state === "queued" && t.kind !== PUBLIC_FOLLOWUP_KIND,
   );
-  const publicFollowups = all.filter(
+  const publicFollowups = items.filter(
     (t) => t.kind === PUBLIC_FOLLOWUP_KIND && t.public_followup,
   );
-  const doneCount = all.filter((t) => t.state === "done").length;
+  const doneCount = items.filter((t) => t.state === "done").length;
   const blocked = blockedIds(all);
   const readyCount = readyTasks(all).length;
 
