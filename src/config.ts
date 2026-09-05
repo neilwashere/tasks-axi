@@ -327,6 +327,31 @@ function requiredGithubString(
   return trimmed;
 }
 
+function githubEndpoint(value: string, source: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new AxiError(
+      `${source} must be a valid HTTPS URL`,
+      "VALIDATION_ERROR",
+    );
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new AxiError(
+      `${source} must be a credential-free HTTPS URL without query or fragment`,
+      "VALIDATION_ERROR",
+    );
+  }
+  return parsed.toString().replace(/\/$/, "");
+}
+
 function positiveInteger(
   value: number | undefined,
   fallback: number,
@@ -395,16 +420,22 @@ function githubConfig(
       "github.project_number",
     ),
     token,
-    apiUrl: requiredGithubString(
-      (value("api_url") as string | undefined) ??
-        env.GITHUB_API_URL ??
-        "https://api.github.com",
+    apiUrl: githubEndpoint(
+      requiredGithubString(
+        (value("api_url") as string | undefined) ??
+          env.GITHUB_API_URL ??
+          "https://api.github.com",
+        "github.api_url",
+      ),
       "github.api_url",
-    ).replace(/\/$/, ""),
-    graphqlUrl: requiredGithubString(
-      (value("graphql_url") as string | undefined) ??
-        env.GITHUB_GRAPHQL_URL ??
-        "https://api.github.com/graphql",
+    ),
+    graphqlUrl: githubEndpoint(
+      requiredGithubString(
+        (value("graphql_url") as string | undefined) ??
+          env.GITHUB_GRAPHQL_URL ??
+          "https://api.github.com/graphql",
+        "github.graphql_url",
+      ),
       "github.graphql_url",
     ),
     taskIdField: requiredGithubString(

@@ -84,9 +84,9 @@ describe("parseConfigToml", () => {
   });
 
   it("rejects a non-numeric done_keep value", () => {
-    expect(() =>
-      parseConfigToml("[markdown]\ndone_keep = many\n"),
-    ).toThrow(/done_keep/);
+    expect(() => parseConfigToml("[markdown]\ndone_keep = many\n")).toThrow(
+      /done_keep/,
+    );
   });
 
   it("rejects malformed assignments in the top-level scope", () => {
@@ -204,6 +204,27 @@ describe("resolveConfig", () => {
     });
   });
 
+  it("rejects unsafe GitHub endpoints before network", () => {
+    writeFileSync(
+      join(dir, ".tasks.toml"),
+      [
+        'backend = "github"',
+        "[github]",
+        'issue_repository = "example/fleet"',
+        'project_owner = "example"',
+        "project_number = 12",
+        'api_url = "http://token@example.test/api?leak=yes"',
+      ].join("\n"),
+    );
+    expect(() =>
+      resolveConfig({
+        cwd: dir,
+        home,
+        env: { TASKS_AXI_GITHUB_TOKEN: "secret-for-test" },
+      }),
+    ).toThrow(/credential-free HTTPS URL/);
+  });
+
   it("rejects incomplete GitHub settings and GitHub --file before network", () => {
     writeFileSync(
       join(dir, ".tasks.toml"),
@@ -249,14 +270,11 @@ describe("resolveConfig", () => {
     );
   });
 
-  it.each(["", "   "])(
-    "rejects an empty TASKS_AXI_FILE value %#",
-    (value) => {
-      expect(() =>
-        resolveConfig({ cwd: dir, home, env: { TASKS_AXI_FILE: value } }),
-      ).toThrow(/TASKS_AXI_FILE/);
-    },
-  );
+  it.each(["", "   "])("rejects an empty TASKS_AXI_FILE value %#", (value) => {
+    expect(() =>
+      resolveConfig({ cwd: dir, home, env: { TASKS_AXI_FILE: value } }),
+    ).toThrow(/TASKS_AXI_FILE/);
+  });
 
   it.each(["", "   "])(
     "rejects an empty markdown path from toml %#",

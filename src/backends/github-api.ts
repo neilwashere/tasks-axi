@@ -750,21 +750,43 @@ function validateRequiredFields(
       );
     }
   }
-  const status = schema.fields.get(config.statusField);
-  for (const name of Object.keys({
-    Inbox: true,
-    Backlog: true,
-    Ready: true,
-    Blocked: true,
-    "Awaiting captain": true,
-    "In progress": true,
-    "Awaiting landing": true,
-    Done: true,
-    Cancelled: true,
-  })) {
-    if (!status?.options.has(name)) {
+  requireFieldOptions(schema, config.statusField, [
+    "Inbox",
+    "Backlog",
+    "Ready",
+    "Blocked",
+    "Awaiting captain",
+    "In progress",
+    "Awaiting landing",
+    "Done",
+    "Cancelled",
+  ]);
+  requireFieldOptions(schema, config.priorityField, [
+    "P0",
+    "P1",
+    "P2",
+    "P3",
+    "P4",
+  ]);
+  requireFieldOptions(schema, config.waitKindField, [
+    "captain",
+    "external",
+    "load",
+    "parked",
+    "future",
+  ]);
+}
+
+function requireFieldOptions(
+  schema: ProjectSchema,
+  fieldName: string,
+  names: string[],
+): void {
+  const field = schema.fields.get(fieldName);
+  for (const name of names) {
+    if (!field?.options.has(name)) {
       throw new AxiError(
-        `GitHub field "${config.statusField}" has no option named "${name}"`,
+        `GitHub field "${fieldName}" has no option named "${name}"`,
         "VALIDATION_ERROR",
       );
     }
