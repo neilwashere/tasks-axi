@@ -291,16 +291,16 @@ export class GithubStore implements Store {
       await this.writeHold(item.id, patch.hold ?? undefined);
       changed.push("hold");
     }
-    if (patch.addLinks?.length) {
-      const links = mergeLinks(current.links, patch.addLinks);
-      if (links.length !== current.links.length) {
-        await this.setFieldVerified(
-          item.id,
-          this.config.linksField,
-          JSON.stringify(links),
-        );
-        changed.push("links");
-      }
+    const projectedLinks = patch.addLinks?.length
+      ? mergeLinks(current.links, patch.addLinks)
+      : current.links;
+    if (projectedLinks.length !== current.links.length) {
+      await this.setFieldVerified(
+        item.id,
+        this.config.linksField,
+        JSON.stringify(projectedLinks),
+      );
+      changed.push("links");
     }
     for (const line of patch.addBodyLines ?? []) {
       if (line === "") continue;
@@ -309,6 +309,21 @@ export class GithubStore implements Store {
         await this.gateway.addIssueComment(item.issue, `${line}\n\n${marker}`);
         if (!changed.includes("body")) changed.push("body");
       }
+    }
+    if (
+      (patch.hold !== undefined || patch.addLinks?.length) &&
+      current.state !== "done"
+    ) {
+      await this.setFieldVerified(
+        item.id,
+        this.config.statusField,
+        statusFor(current.state, {
+          deps: current.deps,
+          hold:
+            patch.hold === undefined ? current.hold : (patch.hold ?? undefined),
+          links: projectedLinks,
+        }),
+      );
     }
 
     return { task: await this.requireTask(id), changed };
@@ -425,6 +440,17 @@ export class GithubStore implements Store {
       this.config.dependenciesField,
       JSON.stringify(deps),
     );
+    if (current.state === "queued") {
+      await this.setFieldVerified(
+        item.id,
+        this.config.statusField,
+        statusFor("queued", {
+          deps,
+          hold: current.hold,
+          links: current.links,
+        }),
+      );
+    }
     return !existing;
   }
 
@@ -456,6 +482,17 @@ export class GithubStore implements Store {
       this.config.dependenciesField,
       JSON.stringify(deps),
     );
+    if (current.state === "queued") {
+      await this.setFieldVerified(
+        item.id,
+        this.config.statusField,
+        statusFor("queued", {
+          deps,
+          hold: current.hold,
+          links: current.links,
+        }),
+      );
+    }
     return true;
   }
 
@@ -810,6 +847,7 @@ export class GithubStore implements Store {
       statusFor(state, {
         deps: input.deps ?? [],
         hold: input.hold,
+        links: input.links ?? [],
       }),
     );
   }
@@ -879,11 +917,19 @@ function stateForStatus(status: string): State | undefined {
   return (STATUS_TO_STATE as Record<string, State>)[status];
 }
 
-function statusFor(state: State, task: Pick<Task, "deps" | "hold">): string {
-  if (state === "in_flight") return "In progress";
+function statusFor(
+  state: State,
+  task: Pick<Task, "deps" | "hold" | "links">,
+): string {
   if (state === "done") return "Done";
+  if (state === "in_flight") {
+    return task.links.some((link) => link.kind === "pr")
+      ? "Awaiting landing"
+      : "In progress";
+  }
   if (task.deps.some((dep) => dep.type === "blocked-by")) return "Blocked";
   if (task.hold?.kind === "captain") return "Awaiting captain";
+  if (task.hold?.kind === "external") return "Blocked";
   if (task.hold) return "Backlog";
   return "Ready";
 }

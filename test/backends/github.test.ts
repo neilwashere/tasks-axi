@@ -520,6 +520,42 @@ describe("GithubStore", () => {
         reason: "wait for blocker",
       },
     ]);
+    expect(gateway.items[1].fields[config.statusField]).toBe("Blocked");
+    expect(
+      await backend.removeDep("task-q1", {
+        type: "blocked-by",
+        id: "blocker-q1",
+      }),
+    ).toBe(true);
+    expect(gateway.items[1].fields[config.statusField]).toBe("Ready");
+  });
+
+  it("projects dispatch holds into fleet status", async () => {
+    const gateway = new FakeGateway();
+    const item = gateway.seed("hold-q1");
+    const backend = store(gateway);
+    await backend.update("hold-q1", {
+      hold: { reason: "captain input", kind: "captain" },
+    });
+    expect(item.fields[config.statusField]).toBe("Awaiting captain");
+    await backend.update("hold-q1", {
+      hold: { reason: "vendor input", kind: "external" },
+    });
+    expect(item.fields[config.statusField]).toBe("Blocked");
+    await backend.update("hold-q1", { hold: null });
+    expect(item.fields[config.statusField]).toBe("Ready");
+  });
+
+  it("projects an in-flight PR as awaiting landing", async () => {
+    const gateway = new FakeGateway();
+    const item = gateway.seed("landing-q1", "In progress");
+    const backend = store(gateway);
+    await backend.update("landing-q1", {
+      addLinks: [
+        { kind: "pr", url: "https://github.test/example/repo/pull/1" },
+      ],
+    });
+    expect(item.fields[config.statusField]).toBe("Awaiting landing");
   });
 
   it("records notes once as idempotently marked comments", async () => {
