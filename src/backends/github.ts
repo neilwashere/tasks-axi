@@ -15,7 +15,13 @@ import type {
   TransitionOpts,
 } from "../model.js";
 import type { PublicFollowupMutation } from "../public-followup.js";
-import type { Capabilities, Store, TaskSnapshot } from "../store.js";
+import type {
+  AdoptionCandidate,
+  AdoptionInput,
+  Capabilities,
+  Store,
+  TaskSnapshot,
+} from "../store.js";
 
 export interface GithubIssueRecord {
   id: string;
@@ -61,6 +67,7 @@ export interface GithubGateway {
     title: string;
     body: string;
   }): Promise<GithubIssueRecord>;
+  getIssueByUrl(url: string): Promise<GithubIssueRecord>;
   ensureProjectItem(issue: GithubIssueRecord): Promise<GithubProjectItemRecord>;
   updateProjectField(
     itemId: string,
@@ -128,6 +135,7 @@ export class GithubStore implements Store {
       customStates: true,
       serverMintsIds: false,
       bodyReplace: false,
+      adoption: true,
       cancellation: true,
       hardRemove: false,
       ownershipTransfer: true,
@@ -309,6 +317,48 @@ export class GithubStore implements Store {
   async remove(id: string): Promise<Task> {
     void id;
     throw unsupported("hard removal", "github");
+  }
+
+  async inbox(): Promise<AdoptionCandidate[]> {
+    await this.gateway.validateSchema();
+    const items = await this.allProjectItems(
+      `no:${projectFieldKey(this.config.taskIdField)}`,
+    );
+    return items
+      .filter((item) => !item.fields[this.config.taskIdField])
+      .map((item) => ({
+        url: item.issue.url,
+        title: item.issue.title,
+        repository: item.issue.repository,
+        number: item.issue.number,
+      }));
+  }
+
+  async adopt(issueUrl: string, input: AdoptionInput): Promise<Task> {
+    this.requireSupportedInput(input);
+    await this.gateway.validateSchema();
+    this.requireCanonicalId(input.id);
+    await this.requireDependencies(input.id, input.deps ?? []);
+    const issue = await this.gateway.getIssueByUrl(issueUrl);
+    const exact = await this.exactItems(input.id);
+    if (exact.length > 1) throw duplicateTaskId(input.id, exact);
+    if (exact[0] && exact[0].issue.id !== issue.id) {
+      throw new AxiError(`Task "${input.id}" already exists`, "CONFLICT", [
+        exact[0].issue.url,
+      ]);
+    }
+    const item = exact[0] ?? (await this.gateway.ensureProjectItem(issue));
+    const currentId = item.fields[this.config.taskIdField];
+    if (currentId && currentId !== input.id) {
+      throw new AxiError(
+        `GitHub issue is already adopted as task "${currentId}"`,
+        "CONFLICT",
+        [item.issue.url],
+      );
+    }
+    this.itemIds.set(input.id, item.id);
+    await this.convergeCreate(item, { ...input, title: issue.title });
+    return this.taskFromItem(await this.gateway.getProjectItem(item.id)).task;
   }
 
   async transition(
@@ -689,7 +739,7 @@ export class GithubStore implements Store {
     }
   }
 
-  private requireSupportedInput(input: TaskInput): void {
+  private requireSupportedInput(input: TaskInput | AdoptionInput): void {
     if (input.public_followup || input.kind === "public-followup") {
       throw unsupported("public follow-ups", "github");
     }
@@ -701,14 +751,6 @@ export class GithubStore implements Store {
     input: TaskInput,
   ): Promise<void> {
     await this.setFieldVerified(item.id, this.config.taskIdField, input.id);
-    await this.setFieldVerified(
-      item.id,
-      this.config.statusField,
-      statusFor(input.state ?? "queued", {
-        deps: input.deps ?? [],
-        hold: input.hold,
-      }),
-    );
     await this.setFieldVerified(
       item.id,
       this.config.kindField,
@@ -748,6 +790,28 @@ export class GithubStore implements Store {
         await this.gateway.ensureParent(target.issue.id, item.issue.id);
       }
     }
+    const state = input.state ?? "queued";
+    if (item.issue.repository === this.config.issueRepository) {
+      const desiredIssueState = state === "done" ? "CLOSED" : "OPEN";
+      if (item.issue.state !== desiredIssueState) {
+        await this.gateway.updateIssue(item.issue, {
+          state: desiredIssueState,
+        });
+      }
+    }
+    await this.setFieldVerified(
+      item.id,
+      this.config.closedField,
+      state === "done" ? this.now().toISOString().slice(0, 10) : null,
+    );
+    await this.setFieldVerified(
+      item.id,
+      this.config.statusField,
+      statusFor(state, {
+        deps: input.deps ?? [],
+        hold: input.hold,
+      }),
+    );
   }
 
   private async setFieldVerified(
@@ -955,12 +1019,16 @@ function setOptional<K extends "repo" | "kind" | "owner">(
   if (value) task[key] = value;
 }
 
-function projectFieldQuery(field: string, value: string): string {
-  const key = field
+function projectFieldKey(field: string): string {
+  return field
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+function projectFieldQuery(field: string, value: string): string {
+  const key = projectFieldKey(field);
   const escaped = value.replace(/["\\]/g, "\\$&");
   return `${key}:"${escaped}"`;
 }

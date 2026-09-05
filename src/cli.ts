@@ -16,6 +16,12 @@ import {
   showCommand,
   updateCommand,
 } from "./commands/crud.js";
+import {
+  ADOPT_HELP,
+  INBOX_HELP,
+  adoptCommand,
+  inboxCommand,
+} from "./commands/adoption.js";
 import { CANCEL_HELP, cancelCommand } from "./commands/cancel.js";
 import {
   CAPABILITIES_HELP,
@@ -72,8 +78,8 @@ type MainOptions = {
 };
 
 export const TOP_HELP = `usage: tasks-axi [command] [args] [flags]
-commands[22]:
-  (none)=dashboard, add, list, show, start, done, cancel, reopen, update, rm, block, unblock, hold, unhold, ready, owner-transfer, capabilities, public-followup, mv, prune, render, setup
+commands[24]:
+  (none)=dashboard, inbox, adopt, add, list, show, start, done, cancel, reopen, update, rm, block, unblock, hold, unhold, ready, owner-transfer, capabilities, public-followup, mv, prune, render, setup
 flags[4]:
   --backend <name> (after command), --file <path> (after command), --json (machine-readable result), --help, -v/-V/--version
 examples:
@@ -93,6 +99,8 @@ type CommandFn = (args: string[], ctx?: TasksContext) => Promise<string>;
 
 // Canonical verbs plus the AXI/firstmate aliases (create/view/edit/delete/close).
 const COMMANDS: Record<string, CommandFn> = {
+  inbox: withContext(inboxCommand),
+  adopt: withContext(adoptCommand),
   add: withContext(addCommand),
   create: withContext(addCommand),
   list: withContext(listCommand),
@@ -122,6 +130,8 @@ const COMMANDS: Record<string, CommandFn> = {
 };
 
 const COMMAND_HELP: Record<string, string> = {
+  inbox: INBOX_HELP,
+  adopt: ADOPT_HELP,
   add: ADD_HELP,
   create: ADD_HELP,
   list: LIST_HELP,

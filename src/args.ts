@@ -47,6 +47,22 @@ export function requireNonEmptySingleLineFlagValue(
   return checked;
 }
 
+export function requireSafeTagFlagValue(
+  flag: string,
+  value: string | undefined,
+): string | undefined {
+  const checked = requireNonEmptySingleLineFlagValue(flag, value);
+  if (checked === undefined) return undefined;
+  if (/[()]/.test(checked)) {
+    throw new AxiError(
+      `${flag} must not contain parentheses`,
+      "VALIDATION_ERROR",
+      [`Pass ${flag}=... without parentheses`],
+    );
+  }
+  return checked.trim();
+}
+
 /** Get a flag's value from --flag value or --flag=value without modifying args. */
 export function getFlag(args: string[], name: string): string | undefined {
   const equalsPrefix = flagEqualsPrefix(name);

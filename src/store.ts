@@ -29,6 +29,8 @@ export interface Capabilities {
   serverMintsIds: boolean;
   /** Can it replace human-authored task bodies without losing concurrent edits? */
   bodyReplace: boolean;
+  /** Can it adopt existing tracker records and enumerate unadopted inbox items? */
+  adoption: boolean;
   /** Can it retain a task as explicitly cancelled without claiming delivery? */
   cancellation: boolean;
   /** Can it physically erase a task rather than retain a terminal record? */
@@ -42,6 +44,15 @@ export interface Capabilities {
   /** Supports the durable, receipt-gated public-followup state machine. */
   publicFollowups: boolean;
 }
+
+export interface AdoptionCandidate {
+  url: string;
+  title: string;
+  repository: string;
+  number: number;
+}
+
+export type AdoptionInput = Omit<TaskInput, "title" | "body">;
 
 export interface PruneOptions {
   state: State;
@@ -89,8 +100,8 @@ export async function pointTaskSet(store: Store, task: Task): Promise<Task[]> {
  * backend gets them for free.
  *
  * The core contract is create/get/update/remove/list/transition/addDep/
- * removeDep/updatePublicFollowup. `transferMany`, `prune` and `render` are
- * optional and capability-gated.
+ * removeDep/updatePublicFollowup. Adoption, cancellation, ownership/collection
+ * transfer, pruning, and rendering are optional and capability-gated.
  */
 export interface Store {
   capabilities(): Capabilities;
@@ -101,6 +112,8 @@ export interface Store {
   /** Apply a patch and report which fields actually changed. */
   update(id: string, patch: TaskPatch): Promise<TaskUpdateResult>;
   remove(id: string): Promise<Task>;
+  inbox?(): Promise<AdoptionCandidate[]>;
+  adopt?(issueUrl: string, input: AdoptionInput): Promise<Task>;
   cancel?(id: string, reason: string): Promise<Task>;
 
   // query
@@ -126,11 +139,7 @@ export interface Store {
    * a single-task copy-then-remove rather than risking a half-applied move.
    */
   transferMany?(ids: string[], destination: Store): Promise<Task[]>;
-  transferOwnership?(
-    ids: string[],
-    from: string,
-    to: string,
-  ): Promise<Task[]>;
+  transferOwnership?(ids: string[], from: string, to: string): Promise<Task[]>;
 
   // maintenance (optional, capability-gated)
   prune?(options: PruneOptions): Promise<PruneResult>;

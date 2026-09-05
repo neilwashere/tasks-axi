@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ResolvedGithubConfig } from "../../src/config.js";
+import { adoptCommand, inboxCommand } from "../../src/commands/adoption.js";
 import {
   GithubStore,
   type GithubGateway,
@@ -51,7 +52,9 @@ class FakeGateway implements GithubGateway {
   ): Promise<GithubProjectItemPage> {
     this.queries.push(query);
     let matched = this.items;
-    if (query?.includes(':"')) {
+    if (query?.startsWith("no:")) {
+      matched = matched.filter((item) => !item.fields[config.taskIdField]);
+    } else if (query?.includes(':"')) {
       const fields = new Map([
         ["owning-home", config.ownerField],
         ["target-repository", config.targetRepositoryField],
@@ -116,6 +119,12 @@ class FakeGateway implements GithubGateway {
       throw new Error("lost create response");
     }
     return issue;
+  }
+
+  async getIssueByUrl(url: string): Promise<GithubIssueRecord> {
+    const item = this.items.find((candidate) => candidate.issue.url === url);
+    if (!item) throw new Error(`missing issue ${url}`);
+    return item.issue;
   }
 
   async ensureProjectItem(
@@ -320,6 +329,88 @@ describe("GithubStore", () => {
     });
   });
 
+  it("enumerates and adopts an untagged existing product issue", async () => {
+    const gateway = new FakeGateway();
+    const item = gateway.seed("temporary-id", "Inbox", "example/product");
+    delete item.fields[config.taskIdField];
+    delete item.fields[config.statusField];
+    const backend = store(gateway);
+
+    expect(await backend.inbox()).toEqual([
+      {
+        url: item.issue.url,
+        title: item.issue.title,
+        repository: "example/product",
+        number: 1,
+      },
+    ]);
+    const adopted = await backend.adopt(item.issue.url, {
+      id: "adopted-q1",
+      owner: "secondmate-a",
+      repo: "product",
+      priority: 1,
+    });
+    expect(adopted).toMatchObject({
+      id: "adopted-q1",
+      owner: "secondmate-a",
+      repo: "product",
+      priority: 1,
+    });
+    expect(await backend.inbox()).toEqual([]);
+    const writes = gateway.mutations;
+    expect(
+      await backend.adopt(item.issue.url, {
+        id: "adopted-q1",
+        owner: "secondmate-a",
+        repo: "product",
+        priority: 1,
+      }),
+    ).toMatchObject({ id: "adopted-q1" });
+    expect(gateway.mutations).toBe(writes);
+    expect(gateway.items).toHaveLength(1);
+  });
+
+  it("exposes inbox and adoption through public commands", async () => {
+    const gateway = new FakeGateway();
+    const item = gateway.seed("temporary-id", "Inbox", "example/product");
+    delete item.fields[config.taskIdField];
+    delete item.fields[config.statusField];
+    const backend = store(gateway);
+    const context = {
+      store: backend,
+      config: {
+        backend: "github" as const,
+        github: config,
+        doneKeep: 0 as const,
+      },
+    };
+
+    expect(JSON.parse(await inboxCommand(["--json"], context))).toMatchObject({
+      ok: true,
+      action: "inbox",
+      count: 1,
+      items: [{ url: item.issue.url }],
+    });
+    expect(
+      JSON.parse(
+        await adoptCommand(
+          [
+            "adopted-command-q1",
+            item.issue.url,
+            "--owner",
+            "secondmate-a",
+            "--json",
+          ],
+          context,
+        ),
+      ),
+    ).toMatchObject({
+      ok: true,
+      action: "adopt",
+      task: { id: "adopted-command-q1", owner: "secondmate-a" },
+    });
+  });
+
   it("recovers a lost create response and converges one item", async () => {
     const gateway = new FakeGateway();
     gateway.failCreateAfterCommit = true;
@@ -499,6 +590,7 @@ describe("GithubStore", () => {
     expect(capabilities).toMatchObject({
       backend: "github",
       bodyReplace: false,
+      adoption: true,
       cancellation: true,
       hardRemove: false,
       collectionTransfer: false,

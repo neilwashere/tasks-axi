@@ -2,6 +2,7 @@ import {
   parseOptionalNonNegativeIntegerFlag,
   requireNonEmptyFlagValue,
   requireNonEmptySingleLineFlagValue,
+  requireSafeTagFlagValue,
   requirePositionals,
   requireId,
   takeAllFlags,
@@ -118,22 +119,6 @@ async function requireExistingBlockers(
       "Create the blocker task first, or choose an existing task id",
     ]);
   }
-}
-
-function requireSafeTagFlagValue(
-  flag: string,
-  value: string | undefined,
-): string | undefined {
-  const checked = requireNonEmptySingleLineFlagValue(flag, value);
-  if (checked === undefined) return undefined;
-  if (/[()]/.test(checked)) {
-    throw new AxiError(
-      `${flag} must not contain parentheses`,
-      "VALIDATION_ERROR",
-      [`Pass ${flag}=... without parentheses`],
-    );
-  }
-  return checked.trim();
 }
 
 function requireTypedLinkUrl(

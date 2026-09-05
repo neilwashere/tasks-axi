@@ -345,6 +345,7 @@ export class MarkdownStore implements Store {
       customStates: true,
       serverMintsIds: false,
       bodyReplace: true,
+      adoption: false,
       cancellation: false,
       hardRemove: true,
       ownershipTransfer: false,

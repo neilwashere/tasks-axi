@@ -134,6 +134,7 @@ Use `ready --include-held` to show dispatchable ready work and a separate `held`
 Use `list --state held` or `list --fields held,hold_reason,hold_kind,hold_until` when you need to scan active hold state directly.
 Pass `--json` to any mutation for a machine-readable result object (`{ "ok": true, "action": …, "task": { … } }` or operation-specific result fields) instead of TOON, so an agent can confirm a write deterministically without a follow-up read.
 `list --json`, `show --json`, and `ready --json` expose complete, untruncated backend-neutral reads; `capabilities --json` reports which optional operations the active backend supports.
+On adoption-capable backends, `inbox --json` lists untagged tracker records and `adopt <id> <issue-url>` assigns the stable Task ID without replacing the issue's human-owned title or body.
 Use `--owner <home>` on `add`, `list`, `ready`, or `update` to carry and query operational ownership independently of the task's target repository.
 `owner-transfer <id> [<id>...] --from <home> --to <home>` replayably transfers a preflighted batch on backends that support ownership transfer.
 `cancel <id> --reason <text>` retains a distinct cancelled terminal outcome on backends that support cancellation; it is not an alias for destructive `rm` or delivered `done`.
@@ -268,6 +269,7 @@ The Project must already contain these exact default fields: `Task ID` (text), `
 All field names, API endpoints, request/snapshot timeouts, and page bounds can be overridden under `[github]`; invalid or missing configuration fails before a task request.
 Task IDs are lowercase because Project text-field search is case-insensitive; every narrowed result is compared exactly client-side and duplicate exact values are conflicts.
 Issue bodies remain human-owned after creation, so generic body replacement is refused; notes use idempotently marked comments and links/dependency metadata use dedicated Project fields.
+`inbox` uses the Project's field-scoped `no:task-id` query, and `adopt` reuses an existing issue only after exact Task ID and existing-item conflicts have been checked.
 Fleet completion closes issues only in `issue_repository`; adopted product issues remain open when their project-scoped fleet status reaches Done or Cancelled.
 GitHub does not support hard removal, pruning, collection `mv`, rendering, or public-followup obligations, and each unsupported operation refuses before mutation.
 Done retention is backend-managed and remains visible in the Project.

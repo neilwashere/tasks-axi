@@ -155,6 +155,36 @@ export class GithubApiGateway implements GithubGateway {
     return mapRestIssue(raw, input.repository);
   }
 
+  async getIssueByUrl(url: string): Promise<GithubIssueRecord> {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new AxiError("Issue URL is invalid", "VALIDATION_ERROR");
+    }
+    const match = /^\/([^/]+)\/([^/]+)\/issues\/(\d+)\/?$/.exec(
+      parsed.pathname,
+    );
+    if (parsed.protocol !== "https:" || !match) {
+      throw new AxiError(
+        "Issue URL must be an HTTPS GitHub issue URL",
+        "VALIDATION_ERROR",
+      );
+    }
+    const repository = `${match[1]}/${match[2]}`;
+    const raw = await this.rest<JsonObject>(
+      "GET",
+      `/repos/${repository}/issues/${match[3]}`,
+    );
+    if (raw.pull_request !== undefined) {
+      throw new AxiError(
+        "Pull requests cannot be adopted as tasks",
+        "VALIDATION_ERROR",
+      );
+    }
+    return mapRestIssue(raw, repository);
+  }
+
   async ensureProjectItem(
     issue: GithubIssueRecord,
   ): Promise<GithubProjectItemRecord> {

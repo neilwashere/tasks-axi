@@ -1435,6 +1435,7 @@ describe("MarkdownStore", () => {
           deps: true,
           prune: true,
           bodyReplace: true,
+          adoption: false,
           cancellation: false,
           hardRemove: true,
           ownershipTransfer: false,
